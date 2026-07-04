@@ -3,10 +3,15 @@ import anthropic
 from agent.providers.base import Message, ModelProvider, ModelResponse, ToolCall
 from agent.tools.registry import Tool
 
-SYSTEM_PROMPT = (
+DEFAULT_SYSTEM_PROMPT = (
     "You are a helpful agent running inside a Docker container. "
     "Use the available tools when a question requires real-world information "
-    "you don't otherwise have, such as the current date or time."
+    "you don't otherwise have, such as the current date or time.\n\n"
+    "Never invent a metric value, status, or other factual detail. Only state "
+    "a value you actually received from a tool result. If a tool call errors, "
+    "or returns empty/no data, say so explicitly (e.g. 'that query returned no "
+    "data' or 'the tool call failed: <error>') instead of guessing a plausible-"
+    "sounding answer."
 )
 
 
@@ -17,7 +22,12 @@ class AnthropicProvider(ModelProvider):
         self._client = anthropic.Anthropic(api_key=api_key)
         self._model = model
 
-    def chat(self, messages: list[Message], tools: list[Tool]) -> ModelResponse:
+    def chat(
+        self,
+        messages: list[Message],
+        tools: list[Tool],
+        system_prompt: str | None = None,
+    ) -> ModelResponse:
         anthropic_messages = self._to_anthropic_messages(messages)
         anthropic_tools = [
             {
@@ -31,7 +41,7 @@ class AnthropicProvider(ModelProvider):
         response = self._client.messages.create(
             model=self._model,
             max_tokens=1024,
-            system=SYSTEM_PROMPT,
+            system=system_prompt or DEFAULT_SYSTEM_PROMPT,
             messages=anthropic_messages,
             tools=anthropic_tools,
         )

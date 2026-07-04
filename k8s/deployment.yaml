@@ -1,0 +1,60 @@
+# Example in-cluster production deployment for the AIOps agent.
+#
+# IMPORTANT: replicas must stay at 1. Rule cooldown/consecutive-breach state
+# lives in the process's memory (see agent/monitor.py RuleState) - multiple
+# replicas would each independently detect and remediate the same breach.
+# strategy.type is Recreate (not the default RollingUpdate) for the same
+# reason: a rolling update deliberately runs two pods briefly during a
+# deploy, which is exactly the hazard this is meant to prevent. If you need
+# HA, move RuleState/cooldown/incident tracking to a shared store (e.g.
+# Redis) first, then this restriction can be lifted.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aiops-agent
+  namespace: default
+  labels:
+    app: aiops-agent
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: aiops-agent
+  template:
+    metadata:
+      labels:
+        app: aiops-agent
+    spec:
+      serviceAccountName: aiops-agent
+      # Must exceed VERIFY_TIMEOUT_SECONDS (default 120) plus a buffer, so a
+      # pod termination during shutdown doesn't get SIGKILLed mid-remediation.
+      terminationGracePeriodSeconds: 150
+      containers:
+        - name: aiops-agent
+          image: your-registry/aiops-agent:latest
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: aiops-agent-config
+            - secretRef:
+                name: aiops-agent-secrets
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
