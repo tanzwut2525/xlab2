@@ -1,0 +1,27 @@
+services:
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: agent
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    depends_on:
+      - ollama
+
+  # Local model server. The agent talks to it over the compose network at
+  # http://ollama:11434 (see OLLAMA_BASE_URL in .env.example). Pull a
+  # tool-calling-capable model once it's up, e.g.:
+  #   docker compose exec ollama ollama pull llama3.1
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+
+volumes:
+  ollama_data:
