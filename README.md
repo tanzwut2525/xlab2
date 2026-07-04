@@ -240,12 +240,12 @@ curl -X POST http://localhost:8000/chat \
   -d '{"message": "What time is it in Kyiv?", "session_id": "demo"}'
 ```
 
-Ask it to check on the target service (read-only tools are available by default):
+Ask it to check on a metric (read-only tools are available by default). Against the bundled demo Prometheus, `job="prometheus"` (its own self-scrape) is the one job that actually has data - see [Adding a monitoring rule](#adding-a-monitoring-rule) for why `config/rules.yaml`'s other example rules still show no data until you point this at a real service:
 
 ```bash
 curl -X POST http://localhost:8000/chat \
   -H "Content-Type: application/json" \
-  -d '{"message": "What is up{job=\"api\"} reporting right now?", "session_id": "demo", "provider": "ollama"}'
+  -d '{"message": "What is up{job=\"prometheus\"} reporting right now?", "session_id": "demo", "provider": "ollama"}'
 ```
 
 Clear a session's history:
@@ -334,7 +334,9 @@ rules:
       name: my-service
 ```
 
-Restart the agent (or redeploy) to pick up changes — rules are loaded once at startup.
+Rules are loaded once at startup, and `config/rules.yaml` is copied into the Docker image at build time — so picking up an edit under Docker Compose needs `docker compose up -d --build agent`, not just `docker compose restart agent` (see the smoke test walkthrough above). Outside Docker (running `uvicorn` directly), a plain restart is enough since the file is read from disk.
+
+**About the shipped example rules:** `service_down` queries `up{job="prometheus"}` - the one job the bundled demo Prometheus actually scrapes (itself), so it returns real data out of the box. `high_p99_latency` and `high_5xx_rate` query `http_request_duration_seconds_bucket`/`http_requests_total` - metric names typical web-app instrumentation exposes, which Prometheus does not export about itself. Those two will show `"no_data"` in `GET /status` until you either point `PROMETHEUS_URL` at a real Prometheus scraping an instrumented service, or replace the `job="prometheus"` placeholder in their queries with the label of a real job that exposes those metrics.
 
 ## Adding a tool
 
@@ -394,7 +396,11 @@ Ideas for evolving this beyond the current MVP, roughly in order of effort:
 
 - Conversation history (`/chat`) and monitoring state (cooldowns, incident history) are stored in-memory in the `agent` process; both are lost on restart and won't work if you scale to multiple replicas. See "Making the agent more agentic over time" above for how to lift this.
 - `/chat` has no authentication. Keep `CHAT_EXPOSE_OPS_TOOLS=false` (the default) unless it's behind auth/network policy.
-- **Local models can hallucinate over a failed or empty tool result, even when the tool call itself behaved correctly.** In testing, asking `/chat` "what is `up{job=\"api\"}` reporting?" (a query that matches no series in the bundled demo Prometheus) produced a confident but fabricated answer ("currently reporting 0") instead of "no data found." Root cause seen in the logs: the model didn't always JSON-escape the quotes inside the PromQL string correctly, so occasionally the tool call itself was malformed and errored (Prometheus returned `400 Bad Request` for a truncated query like `up{job=`); even when the tool call *was* well-formed and correctly returned an empty result, the model still stated a specific value instead of reporting "no data." Both `DEFAULT_SYSTEM_PROMPT`/`OPS_SYSTEM_PROMPT` and `query_prometheus`'s tool output now explicitly instruct against guessing a value on error/empty results, which helps but does not eliminate this with weak models - for anything you need to trust, verify against `GET /status`, `docker compose logs -f agent`, or `curl`-ing Prometheus directly rather than taking a `/chat` answer at face value. Stronger tool-calling models are less prone to this; see the model-choice note in the smoke test section above.
+- **Local models can occasionally hallucinate over a failed or empty tool result, or mangle a tool call's arguments.** Two distinct issues were found in testing and are now mitigated (not eliminated - see below):
+  - *Hallucinating over empty/failed results*: asking `/chat` "what is `up{job=\"api\"}` reporting?" (a query matching no series - `job="api"` isn't scraped by the bundled demo Prometheus) originally produced a confident but fabricated answer ("currently reporting 0") instead of "no data found." `DEFAULT_SYSTEM_PROMPT`/`OPS_SYSTEM_PROMPT` and `query_prometheus`'s tool output (`agent/tools/prometheus_tool.py`) now explicitly instruct against guessing a value, and include a `note` field spelling out "no data ≠ 0." Verified fixed: the same question now reliably returns "the tool call returned: no data" instead of a fabricated value.
+  - *Malformed tool-call arguments*: with `llama3.1`, a PromQL query containing an embedded `"` (e.g. `job="api"`) occasionally got truncated in the tool call's JSON arguments (the model failed to escape the inner quote as `\"`), causing Prometheus to reject it with `400 Bad Request`. This was non-deterministic - repeating the identical question 3 times in a row succeeded all 3 times after the one failure. When it does happen, the model now correctly reports the tool failure instead of hallucinating around it (verified: `"The tool call failed: Client error '400 Bad Request'..."`).
+
+  For anything you need to trust, verify against `GET /status`, `docker compose logs -f agent`, or `curl`-ing Prometheus directly rather than taking a single `/chat` answer at face value. Stronger tool-calling models are less prone to both issues; see the model-choice note in the smoke test section above.
 
 ## Troubleshooting
 
@@ -410,7 +416,10 @@ Ideas for evolving this beyond the current MVP, roughly in order of effort:
   The `anthropic` provider is selected (for `/chat` or `MONITOR_PROVIDER`) but `ANTHROPIC_API_KEY` is empty. Set it and `docker compose restart agent`.
 
 - **Monitoring loop logs `Prometheus query failed ... Name or service not known`**
-  `PROMETHEUS_URL` isn't reachable from inside the container. If you're not using the bundled Prometheus, make sure the URL is reachable from the `agent` container's network, not just your host.
+  `PROMETHEUS_URL` isn't reachable from inside the container - e.g. Prometheus is stopped, or (if you're not using the bundled Prometheus) the URL isn't reachable from the `agent` container's network. `GET /status`'s `last_cycle` will show `"status": "query_failed"` for every affected rule once a cycle runs against the down instance - confirmed by directly stopping the bundled Prometheus container and observing this.
+
+- **`GET /status` still shows `"ok"` right after stopping/breaking Prometheus (or right after any other change)**
+  Not a bug - `last_cycle` only reflects the *last completed* monitoring cycle, up to `MONITOR_INTERVAL_SECONDS` old (60s by default). If you check immediately after a change, you're seeing the previous cycle's result; wait one full interval (or lower `MONITOR_INTERVAL_SECONDS` while testing) and check again.
 
 - **A rule never fires even though the metric looks breached**
   Check `consecutive_breaches_required` (needs that many consecutive cycles) and `cooldown_seconds` (recently-fired rules stay quiet for a while) via `GET /status`'s `last_cycle` field, which shows each rule's current status (`ok`, `breached_pending_confirmation`, `cooldown`, `rate_limited`, `remediated`, `query_failed`, `no_data`).
