@@ -1,0 +1,54 @@
+I want to build a Python-based AI agent that runs inside a Docker container using a local LLM (via Ollama).
+
+The agent should periodically monitor Prometheus metrics and perform autonomous actions based on the metric values.
+
+Please help me design and implement this agent with production-quality code and best practices.
+
+Requirements
+The agent runs continuously inside a Docker container.
+Every configurable interval (e.g., every 60 seconds), it should:
+Query one or more Prometheus metrics using the Prometheus HTTP API.
+Evaluate the returned values.
+Decide whether any action is required.
+If a metric crosses a configured threshold (for example, a health metric becomes 0 or a latency metric exceeds a limit), the agent should:
+Determine the appropriate remediation.
+Restart the affected Kubernetes Deployment/Pod (or another service) if necessary.
+Verify that the remediation succeeded by querying Prometheus again.
+Send a notification describing what happened.
+The solution should be modular and extensible.
+Technical requirements
+Python 3.12+
+Runs in Docker
+Uses a local Ollama model (no OpenAI API)
+Uses the Prometheus HTTP API (not a Prometheus SDK unless there is a compelling reason)
+Uses the Kubernetes Python client for remediation actions
+Supports configurable monitoring intervals
+Includes proper logging and exception handling
+Is easy to extend with additional monitoring rules and tools
+Architecture
+
+Please propose a clean architecture with components such as:
+
+Scheduler
+Agent
+Prometheus client
+Kubernetes client
+Notification service
+Configuration
+LLM interface
+Tool abstraction
+Implementation
+
+Please provide:
+
+A recommended project structure.
+An explanation of the architecture.
+Complete working Python code.
+Dockerfile and docker-compose examples.
+Configuration using environment variables.
+Examples of querying Prometheus metrics.
+Examples of scheduling periodic checks.
+Best practices for production deployments.
+Suggestions for making the agent more autonomous and agentic over time (planning, memory, reasoning, and tool use).
+
+Assume I am building an autonomous operations (AIOps) agent that continuously monitors infrastructure and can safely perform remediation actions.

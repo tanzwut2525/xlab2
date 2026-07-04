@@ -1,12 +1,22 @@
+import json
+import logging
+
 import httpx
 
 from agent.providers.base import Message, ModelProvider, ModelResponse, ToolCall
 from agent.tools.registry import Tool
 
-SYSTEM_PROMPT = (
+logger = logging.getLogger(__name__)
+
+DEFAULT_SYSTEM_PROMPT = (
     "You are a helpful agent running inside a Docker container. "
     "Use the available tools when a question requires real-world information "
-    "you don't otherwise have, such as the current date or time."
+    "you don't otherwise have, such as the current date or time.\n\n"
+    "Never invent a metric value, status, or other factual detail. Only state "
+    "a value you actually received from a tool result. If a tool call errors, "
+    "or returns empty/no data, say so explicitly (e.g. 'that query returned no "
+    "data' or 'the tool call failed: <error>') instead of guessing a plausible-"
+    "sounding answer."
 )
 
 
@@ -15,8 +25,13 @@ class OllamaProvider(ModelProvider):
         self._base_url = base_url.rstrip("/")
         self._model = model
 
-    def chat(self, messages: list[Message], tools: list[Tool]) -> ModelResponse:
-        ollama_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    def chat(
+        self,
+        messages: list[Message],
+        tools: list[Tool],
+        system_prompt: str | None = None,
+    ) -> ModelResponse:
+        ollama_messages = [{"role": "system", "content": system_prompt or DEFAULT_SYSTEM_PROMPT}]
         ollama_messages += self._to_ollama_messages(messages)
 
         ollama_tools = [
@@ -50,13 +65,23 @@ class OllamaProvider(ModelProvider):
             ToolCall(
                 id=f"call_{i}",
                 name=call["function"]["name"],
-                arguments=call["function"].get("arguments", {}),
+                arguments=self._parse_arguments(call["function"].get("arguments", {})),
             )
             for i, call in enumerate(raw_tool_calls)
         ]
 
         stop_reason = "tool_use" if tool_calls else "end_turn"
         return ModelResponse(text=text, tool_calls=tool_calls, stop_reason=stop_reason)
+
+    @staticmethod
+    def _parse_arguments(arguments: dict | str) -> dict:
+        if isinstance(arguments, dict):
+            return arguments
+        try:
+            return json.loads(arguments)
+        except (TypeError, json.JSONDecodeError):
+            logger.warning("Could not parse tool call arguments as JSON: %r", arguments)
+            return {}
 
     @staticmethod
     def _to_ollama_messages(messages: list[Message]) -> list[dict]:

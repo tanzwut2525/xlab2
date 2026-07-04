@@ -11,6 +11,14 @@ services:
       - .env
     depends_on:
       - ollama
+      - prometheus
+    # Uncomment to let the agent manage a real cluster from your dev machine.
+    # Not needed while DRY_RUN=true (the default) - dry-run mode never loads
+    # a kubeconfig or reaches a cluster.
+    # volumes:
+    #   - ~/.kube/config:/home/appuser/.kube/config:ro
+    # environment:
+    #   - KUBECONFIG_PATH=/home/appuser/.kube/config
 
   # Local model server. The agent talks to it over the compose network at
   # http://ollama:11434 (see OLLAMA_BASE_URL in .env.example). Pull a
@@ -22,6 +30,17 @@ services:
       - "11434:11434"
     volumes:
       - ollama_data:/root/.ollama
+
+  # Bundled Prometheus for local development / smoke testing (see
+  # prometheus/prometheus.yml). Point PROMETHEUS_URL at your real Prometheus
+  # in production and remove this service.
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
 
 volumes:
   ollama_data:

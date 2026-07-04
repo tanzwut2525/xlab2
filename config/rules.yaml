@@ -1,0 +1,81 @@
+# Declarative monitoring rules for the AIOps agent.
+#
+# comparator: one of > >= < <= == !=
+#
+# consecutive_breaches_required: how many back-to-back breaches (checked once
+#   per MONITOR_INTERVAL_SECONDS) before the agent acts. Filters out
+#   single-sample noise/scrape hiccups.
+#
+# cooldown_seconds: minimum time between remediation attempts for this rule,
+#   to avoid restart loops.
+#
+# action_hint: a suggestion passed to the LLM as context; it is free to choose
+#   a different tool (e.g. scale instead of restart) if it judges that more
+#   appropriate given the situation and recent incident history.
+#
+# target: the Kubernetes object the agent is allowed to act on for this rule.
+#   The agent will not invent a different target - only what's configured
+#   here (and only namespaces in K8S_ALLOWED_NAMESPACES) can be touched.
+
+rules:
+  - name: service_down
+    description: >-
+      The 'prometheus' target is not reporting itself as up. In this bundled
+      demo stack, Prometheus only self-scrapes (job="prometheus") - there is
+      no separate "api" service, so this rule uses the one job that's
+      actually being scraped. Replace job="prometheus" with your real
+      service's job label once you point PROMETHEUS_URL at a Prometheus
+      that's scraping something real.
+    query: 'up{job="prometheus"}'
+    comparator: "=="
+    threshold: 0
+    consecutive_breaches_required: 2
+    cooldown_seconds: 300
+    action_hint: restart_deployment
+    target:
+      kind: Deployment
+      namespace: default
+      name: api
+
+  - name: high_p99_latency
+    description: >-
+      p99 request latency exceeds 500ms. NOTE: this query targets
+      http_request_duration_seconds_bucket{job="..."}, a metric name typical
+      web-app instrumentation exposes - Prometheus itself does not export a
+      metric with this exact name, so this rule will show "no_data" against
+      the bundled demo Prometheus even after renaming the job. Point it at
+      job="prometheus" (or your real job) only once that job actually exposes
+      this metric.
+    query: >-
+      histogram_quantile(0.99,
+        sum(rate(http_request_duration_seconds_bucket{job="prometheus"}[5m])) by (le)
+      )
+    comparator: ">"
+    threshold: 0.5
+    consecutive_breaches_required: 3
+    cooldown_seconds: 600
+    action_hint: "Latency spikes are often load-related; consider scaling out before restarting."
+    target:
+      kind: Deployment
+      namespace: default
+      name: api
+
+  - name: high_5xx_rate
+    description: >-
+      5xx error rate exceeds 5% of total requests. Same caveat as
+      high_p99_latency above: http_requests_total is a typical web-app metric
+      name, not one Prometheus exports about itself, so this will show
+      "no_data" against the bundled demo Prometheus regardless of job label.
+    query: >-
+      sum(rate(http_requests_total{job="prometheus", status=~"5.."}[5m]))
+      /
+      sum(rate(http_requests_total{job="prometheus"}[5m]))
+    comparator: ">"
+    threshold: 0.05
+    consecutive_breaches_required: 2
+    cooldown_seconds: 300
+    action_hint: restart_deployment
+    target:
+      kind: Deployment
+      namespace: default
+      name: api

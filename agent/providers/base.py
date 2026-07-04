@@ -32,5 +32,14 @@ class ModelResponse:
 
 class ModelProvider(ABC):
     @abstractmethod
-    def chat(self, messages: list[Message], tools: list[Tool]) -> ModelResponse:
-        """Send the conversation to the model and return a normalized response."""
+    def chat(
+        self,
+        messages: list[Message],
+        tools: list[Tool],
+        system_prompt: str | None = None,
+    ) -> ModelResponse:
+        """Send the conversation to the model and return a normalized response.
+
+        `system_prompt`, when given, replaces the provider's default system
+        prompt for this call (used e.g. by the monitoring loop's ops persona).
+        """

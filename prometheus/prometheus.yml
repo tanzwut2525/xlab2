@@ -1,0 +1,13 @@
+# Minimal config for local development / smoke testing. It self-scrapes, so
+# `up{job="prometheus"}` is a real, always-available metric you can use to
+# exercise the full monitoring -> LLM decision -> (dry-run) remediation ->
+# verification -> notification loop without needing a real application or
+# Kubernetes cluster. Point PROMETHEUS_URL at your real Prometheus in
+# production instead of using this bundled instance.
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
